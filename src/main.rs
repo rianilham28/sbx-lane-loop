@@ -30,7 +30,8 @@ usage: sbx-lane-loop [seconds]
 
 The loop reads requests on stdin and writes frames on stdout; end of stdin
 ends the loop and every request's process group. Exit: 0 after end of stdin
-or TERM/INT/HUP, 1 when stdin could not be read, 2 for a usage error.";
+or TERM/INT/HUP, 1 when stdin could not be read or the reader of the frames
+went away, 2 for a usage error.";
 
 fn parse_tick(value: &str) -> Option<Duration> {
     let seconds: f64 = value.parse().ok()?;
@@ -66,11 +67,15 @@ fn main() {
         }
     }
 
-    sys::default_sigpipe();
+    sys::ignore_sigpipe();
     let lane = Arc::new(lane::Lane::new(tick, env::login_env()));
     {
         let stop = Arc::clone(&lane);
         signals::install(move || stop.shutdown());
+    }
+    {
+        let stop = Arc::clone(&lane);
+        frames::on_client_gone(move || stop.shutdown());
     }
     if let Err(error) = lane.serve() {
         eprintln!("sbx-lane-loop: reading stdin: {error}");

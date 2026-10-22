@@ -16,16 +16,7 @@ pub const SIGINT: i32 = 2;
 pub const SIGPIPE: i32 = 13;
 pub const SIGTERM: i32 = 15;
 
-const SIG_DFL: usize = 0;
-
-/// Rust ignores SIGPIPE; the shell loop this program replaces died on it, and
-/// a loop whose reader is gone has nobody left to answer. Restoring the
-/// default action keeps that: writing to a closed stdout ends the process.
-pub fn default_sigpipe() {
-    unsafe {
-        signal(SIGPIPE, SIG_DFL);
-    }
-}
+const SIG_IGN: usize = 1;
 
 pub fn handle(sig: i32, handler: extern "C" fn(i32)) {
     unsafe {
@@ -41,9 +32,40 @@ pub fn kill_group(pid: i32) {
     }
 }
 
+/// Ignores SIGPIPE, for the whole process.
+///
+/// The thread that feeds a request's script writes to a pipe the command owns,
+/// and a command that exits without reading it — `exit 0`, `head` — closes the
+/// read end first. Under the default action that write ends the loop, and on
+/// Darwin the signal that kills it is delivered process-wide, so a mask on the
+/// writer would not hold it either. Ignored, the write is an `EPIPE` the feeder
+/// drops; the loop's own frames are what keep the shell's rule, in `Frames`.
+pub fn ignore_sigpipe() {
+    unsafe {
+        signal(SIGPIPE, SIG_IGN);
+    }
+}
+
 /// One byte, async-signal-safe: all the handler does.
 pub fn write_byte(fd: i32, byte: u8) {
     unsafe {
         write(fd, (&byte as *const u8).cast(), 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ignore_sigpipe;
+    use std::io::Write;
+
+    #[test]
+    fn an_ignored_sigpipe_turns_a_dead_pipe_write_into_an_error() {
+        ignore_sigpipe();
+        let (mut writer, reader) = std::os::unix::net::UnixStream::pair().expect("a socket pair");
+        drop(reader);
+        assert!(
+            writer.write_all(b"x").is_err(),
+            "the write should report EPIPE"
+        );
     }
 }

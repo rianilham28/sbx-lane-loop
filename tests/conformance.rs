@@ -16,7 +16,7 @@
 
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -200,8 +200,12 @@ impl Loop {
             let mut buffer = [0u8; 4096];
             loop {
                 let read = match stdout.read(&mut buffer) {
-                    Ok(0) | Err(_) => break,
+                    Ok(0) => break,
                     Ok(read) => read,
+                    // A signal must not end the read: closing this pipe kills
+                    // the loop with SIGPIPE, which is not what the test meant.
+                    Err(error) if error.kind() == ErrorKind::Interrupted => continue,
+                    Err(_) => break,
                 };
                 partial.extend_from_slice(&buffer[..read]);
                 while let Some(end) = partial.iter().position(|byte| *byte == b'\n') {
@@ -240,11 +244,26 @@ impl Loop {
     }
 
     fn send(&mut self, line: &str) {
-        let stdin = self.stdin.as_mut().expect("stdin is open");
-        stdin
-            .write_all(format!("{line}\n").as_bytes())
-            .expect("writing a frame");
-        stdin.flush().expect("flushing a frame");
+        let frame = format!("{line}\n");
+        let written = self
+            .stdin
+            .as_mut()
+            .expect("stdin is open")
+            .write_all(frame.as_bytes());
+        if let Err(error) = written {
+            // A loop that is gone is the diagnosis worth having: its status,
+            // what it said on stderr, and every frame it wrote before it went.
+            let status = self.child.try_wait().ok().flatten();
+            panic!(
+                "{}: writing a frame: {error}; loop status: {status:?}; stderr: {:?}; frames: {:?}",
+                self.implementation,
+                self.stderr(),
+                self.frames()
+            );
+        }
+        if let Err(error) = self.stdin.as_mut().expect("stdin is open").flush() {
+            panic!("{}: flushing a frame: {error}", self.implementation);
+        }
     }
 
     fn request(&mut self, id: &str, key: Option<&str>, command: &str) {
@@ -263,7 +282,7 @@ impl Loop {
         &self.home
     }
 
-    fn until(&self, what: &str, predicate: impl Fn(&[String]) -> bool) {
+    fn until(&self, what: &str, mut predicate: impl FnMut(&[String]) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if predicate(&self.frames()) {
@@ -331,9 +350,19 @@ impl Loop {
 
     /// End of stdin, then the loop's exit status.
     fn end(&mut self) -> i32 {
+        use std::os::unix::process::ExitStatusExt;
         self.stdin.take();
         match self.wait(Duration::from_secs(10)) {
-            Some(status) => status.code().unwrap_or(-1),
+            Some(status) => match status.code() {
+                Some(code) => code,
+                None => panic!(
+                    "{}: ended by signal {:?} at end of stdin; stderr: {:?}; frames: {:?}",
+                    self.implementation,
+                    status.signal(),
+                    self.stderr(),
+                    self.frames()
+                ),
+            },
             None => {
                 let _ = self.child.kill();
                 panic!("{}: did not exit at end of stdin", self.implementation);
@@ -760,12 +789,7 @@ fn a_signal_ends_the_loop_and_every_group() {
         lane.until("t1's ack", |frames| {
             frames.iter().any(|frame| frame == "A t1")
         });
-        lane.until("the child pid", |_| lane.home().join("child").exists());
-        let child: i32 = fs::read_to_string(lane.home().join("child"))
-            .expect("the child pid")
-            .trim()
-            .parse()
-            .expect("a pid");
+        let child = pid(&lane, "child");
 
         // What a client does to a loop of a foreign wire: `term`, so the
         // loop's own handler ends its requests instead of orphaning them.
@@ -784,6 +808,107 @@ fn a_signal_ends_the_loop_and_every_group() {
             );
             thread::sleep(Duration::from_millis(5));
         }
+    });
+}
+
+#[test]
+fn a_command_that_exits_without_reading_its_script_leaves_the_loop_alive() {
+    for_each(|implementation| {
+        let mut lane = Loop::start(implementation);
+        // The command closes its stdin before the feeder has written the
+        // script, so the write meets a pipe with no reader: the bash loop's
+        // pipeline takes that as the subshell's death, and this program must
+        // not take it as the loop's. Padding makes the write meet the closed
+        // pipe instead of fitting the kernel's buffer.
+        let padding = "#".repeat(200_000);
+        lane.request("x1", None, &format!("exec 0<&-; exit 0\n{padding}\n"));
+        lane.until("x1's answer", |frames| {
+            frames.iter().any(|frame| frame.starts_with("D x1 "))
+        });
+        lane.request("x2", None, "printf 'alive\n'");
+        lane.until("x2's answer", |frames| {
+            frames.iter().any(|frame| frame.starts_with("D x2 "))
+        });
+        assert_eq!(lane.answered("x2").stdout, b"alive\n");
+        assert_eq!(lane.end(), 0);
+    });
+}
+
+#[test]
+fn a_dead_reader_ends_the_loop_and_its_requests() {
+    for_each(|implementation| {
+        // This test does not use `Loop`: it must close the read end of the
+        // loop's stdout and keep it closed, which a reader thread would undo.
+        let home = temp_home();
+        let mut child = Command::new(&implementation.program)
+            .args(&implementation.args)
+            .env_clear()
+            .env("PATH", env::var("PATH").unwrap_or_default())
+            .env("HOME", &home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the loop");
+        let mut stdin = child.stdin.take().expect("stdin is piped");
+        let command = format!("sleep 300 & echo $! > {}/child; sleep 300", home.display());
+        let frame = format!("R d1 {}\n", b64(command.as_bytes()));
+        stdin.write_all(frame.as_bytes()).expect("the request");
+
+        let pid_path = home.join("child");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while fs::read_to_string(&pid_path).map_or(true, |text| text.trim().is_empty()) {
+            assert!(Instant::now() < deadline, "the request never started");
+            thread::sleep(Duration::from_millis(5));
+        }
+        let pid: i32 = fs::read_to_string(&pid_path)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+
+        // The reader goes away: the next frame cannot be written.
+        drop(child.stdout.take());
+
+        // This program notices at its next tick; the bash loop does not
+        // notice at all, so it is only given a second to prove that.
+        let patience = if implementation.name == "sbx-lane-loop" {
+            Duration::from_secs(10)
+        } else {
+            Duration::from_secs(1)
+        };
+        let deadline = Instant::now() + patience;
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("waiting on the loop") {
+                break Some(status);
+            }
+            if Instant::now() > deadline {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        match (implementation.name, status) {
+            ("sbx-lane-loop", Some(status)) => {
+                // The loop ends itself, after killing the group.
+                assert_eq!(status.code(), Some(1), "{status:?}");
+                gone(pid, "a request's child survived a dead reader");
+            }
+            ("sbx-lane-loop", None) => panic!("the loop outlived its reader"),
+            // The bash loop only notices at its next write and only the
+            // ticker's subshell dies: the loop itself waits on stdin, and the
+            // request's children are left behind until end of stdin. The
+            // difference is deliberate and invisible to a client, which is
+            // gone by definition here.
+            (_, None) => {
+                drop(stdin);
+                let status = wait_for(&mut child, Duration::from_secs(10))
+                    .expect("the bash loop ended at end of stdin");
+                assert_eq!(status.code(), Some(0), "{status:?}");
+                gone(pid, "the bash loop's trap did not end the request");
+            }
+            (_, Some(status)) => panic!("the bash loop exited on a dead reader: {status:?}"),
+        }
+        let _ = fs::remove_dir_all(&home);
     });
 }
 
@@ -821,8 +946,9 @@ fn a_request_answers_once_even_against_an_immediate_cancel() {
                 .count();
             assert!(
                 (1..=most).contains(&endings),
-                "{id} answered {endings} times ({} allows {most})",
-                implementation.name
+                "{id} answered {endings} times ({} allows {most}); frames: {frames:?}; stderr: {:?}",
+                implementation.name,
+                lane.stderr()
             );
         }
         assert_eq!(lane.end(), 0);
@@ -884,12 +1010,7 @@ fn end_of_stdin_ends_the_loop_and_every_group() {
         lane.until("e1's ack", |frames| {
             frames.iter().any(|frame| frame == "A e1")
         });
-        lane.until("the child pid", |_| lane.home().join("child").exists());
-        let child: i32 = fs::read_to_string(lane.home().join("child"))
-            .expect("the child pid")
-            .trim()
-            .parse()
-            .expect("a pid");
+        let child = pid(&lane, "child");
 
         assert_eq!(lane.end(), 0);
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -907,17 +1028,20 @@ fn end_of_stdin_ends_the_loop_and_every_group() {
 /// Waiting for them keeps the test from racing the second fork: a member
 /// forked after a group's TERM is in the group but never got the signal.
 fn children(lane: &Loop) -> (i32, i32) {
-    lane.until("both child pids", |_| {
-        lane.home().join("child").exists() && lane.home().join("late-child").exists()
+    (pid(lane, "child"), pid(lane, "late-child"))
+}
+
+/// A pid a command wrote, once the write has landed: the file is created
+/// before its content, so existence alone is not enough.
+fn pid(lane: &Loop, name: &str) -> i32 {
+    let path = lane.home().join(name);
+    let read = || fs::read_to_string(&path).ok()?.trim().parse::<i32>().ok();
+    let mut value = None;
+    lane.until("a child pid", |_| {
+        value = read();
+        value.is_some()
     });
-    let read = |name: &str| -> i32 {
-        fs::read_to_string(lane.home().join(name))
-            .unwrap_or_else(|_| panic!("{name} pid"))
-            .trim()
-            .parse()
-            .expect("a pid")
-    };
-    (read("child"), read("late-child"))
+    value.expect("a pid")
 }
 
 /// Buffer equality with a readable failure message.
@@ -930,6 +1054,19 @@ fn the_same(actual: &[u8], expected: &[u8]) {
 
 extern "C" {
     fn kill(pid: i32, sig: i32) -> i32;
+}
+
+fn wait_for(child: &mut Child, timeout: Duration) -> Option<ExitStatus> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait().expect("waiting on the loop") {
+            return Some(status);
+        }
+        if Instant::now() > deadline {
+            return None;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
 }
 
 fn alive(pid: i32) -> bool {

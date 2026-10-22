@@ -316,7 +316,9 @@ impl Lane {
         let script = request.command.clone();
         let feeder = thread::spawn(move || {
             // `sh` reads the script from stdin; writing on its own thread
-            // keeps a long command from meeting a full stdout pipe.
+            // keeps a long command from meeting a full stdout pipe. A command
+            // that exits without reading its script closes the pipe first:
+            // SIGPIPE is ignored, so that write is a dropped `EPIPE`.
             let _ = stdin.write_all(&script);
         });
 

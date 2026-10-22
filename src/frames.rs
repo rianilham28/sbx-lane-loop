@@ -8,12 +8,20 @@
 //! wire are what the conformance suite proves.
 
 use std::io::{self, Write};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use crate::base64;
 
 pub struct Frames {
     out: Mutex<io::Stdout>,
+}
+
+/// What to do when a frame cannot be written: nobody is reading, and a loop
+/// with no reader has nobody left to answer. Set once, at start.
+static CLIENT_GONE: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+pub fn on_client_gone(action: impl Fn() + Send + Sync + 'static) {
+    let _ = CLIENT_GONE.set(Box::new(action));
 }
 
 /// `E <id|-> <b64 reason>`: the one frame built outside `Frames`, so the
@@ -42,7 +50,16 @@ impl Frames {
         frame.push_str(line);
         frame.push('\n');
         // stdout is line-buffered: this reaches the pipe as one write.
-        let _ = out.write_all(frame.as_bytes());
+        if out.write_all(frame.as_bytes()).is_err() {
+            // The reader is gone. An ignored SIGPIPE means the loop would
+            // otherwise run forever with nobody to answer; end it the way the
+            // bash loop ends under SIGPIPE — after killing its requests'
+            // groups, which the signal would have skipped.
+            if let Some(action) = CLIENT_GONE.get() {
+                action();
+            }
+            std::process::exit(1);
+        }
     }
 
     pub fn ack(&self, id: &str) {

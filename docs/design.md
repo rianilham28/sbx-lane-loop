@@ -141,8 +141,17 @@ handling were all reasoned about at 512.
   second kill to cover the gap.
 - **The ticker is a timer.** `sleep`-in-a-loop drifts; ticks are only
   liveness, so no client can tell.
-- **SIGPIPE is the shell's.** Rust ignores it by default; the default action
-  is restored so a loop whose reader is gone ends as the bash loop did.
+- **SIGPIPE is ignored, and a dead reader ends the loop explicitly.** The
+  thread that feeds a request's script writes to a pipe the command owns, and
+  a command that exits without reading it (`exit 0`, `head`) closes the read
+  end first: with the default action that write kills the whole loop, and on
+  Darwin the signal is delivered process-wide, so blocking it only for the
+  writer does not help. Ignored, it is a dropped `EPIPE`, as it is inside the
+  bash loop's pipeline. The frames keep the rule the shell's death stood for:
+  a frame that cannot be written is a reader that is gone, so the loop kills
+  its request groups and exits 1. The bash loop dies on SIGPIPE without its
+  trap and leaves them; no client is there to see either, and the suite
+  records both.
 - **One answer.** A completion claims the request's single answer before
   writing it, so a `K` racing a finishing command cannot produce a second `D`.
   The bash loop can: its cancel reads the pid file just before the request

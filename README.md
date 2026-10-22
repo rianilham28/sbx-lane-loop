@@ -44,7 +44,8 @@ sbx-lane-loop --help
 The process reads until **end of stdin**, which ends the loop and every
 request's process group. `TERM`, `INT` and `HUP` do the same and exit 0.
 Exit codes: `0` after end of input or a signal, `1` when stdin could not be
-read, `2` for a usage error.
+read or the reader of the frames went away (the loop kills every request's
+group first), `2` for a usage error.
 
 Nothing but frames is written to stdout. Diagnostics go to stderr, which is
 not part of the wire.
