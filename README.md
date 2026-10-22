@@ -22,7 +22,7 @@ runtime dependencies, released as a tarball. [mise](https://mise.jdx.dev)'s
 
 ```toml
 [tools."github:rianilham28/sbx-lane-loop"]
-version = "0.1.1"
+version = "0.1.2"
 
 [tools."github:rianilham28/sbx-lane-loop".platforms]
 linux-x64 = { asset_pattern = "sbx-lane-loop-{{ version }}-x86_64-unknown-linux-musl.tar.gz", checksum = "sha256:<from SHA256SUMS>" }
@@ -119,7 +119,7 @@ keeps the bash loop available as the fallback.
 ## Verify a release
 
 ```bash
-version=0.1.1
+version=0.1.2
 target=x86_64-unknown-linux-musl
 curl -fsSLO "https://github.com/rianilham28/sbx-lane-loop/releases/download/v$version/sbx-lane-loop-$version-$target.tar.gz"
 curl -fsSLO "https://github.com/rianilham28/sbx-lane-loop/releases/download/v$version/SHA256SUMS"

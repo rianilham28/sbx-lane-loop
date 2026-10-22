@@ -1,6 +1,6 @@
 [package]
 name = "sbx-lane-loop"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "The sandbox-side half of the lane stream: one process per sandbox, line-framed requests in, frames out"
 repository = "https://github.com/rianilham28/sbx-lane-loop"
