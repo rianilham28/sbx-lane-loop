@@ -303,10 +303,11 @@ impl Lane {
             Err(_) => {
                 // No shell to run it. The bash loop's `sh` would have exited
                 // 127 with its message on a stderr nobody reads.
-                if !request.ended.load(Ordering::SeqCst) {
+                let answered = !request.ended.swap(true, Ordering::SeqCst);
+                self.release(&request);
+                if answered {
                     self.frames.done(&request.id, 127, "");
                 }
-                self.release(&request);
                 return;
             }
         };
@@ -347,9 +348,16 @@ impl Lane {
                 }
             }
             let status = child.wait();
+            *lock(&request.phase) = Phase::Finished;
             let _ = feeder.join();
             let (stderr, total) = stderr_task.join().unwrap_or((Vec::new(), 0));
-            if !request.ended.load(Ordering::SeqCst) {
+            // One claim on the single answer this request will ever get: an
+            // end that got there first wrote `D 143`, and this one stays
+            // quiet — the same as the bash loop, whose pid file is gone
+            // before it answers.
+            let answered = !request.ended.swap(true, Ordering::SeqCst);
+            self.release(&request);
+            if answered {
                 for piece in protocol::pieces(&stderr) {
                     self.frames.output(&request.id, true, &piece);
                 }
@@ -362,10 +370,13 @@ impl Lane {
             let stdout_task = thread::spawn(move || capture(stdout));
             let stderr_task = thread::spawn(move || capture(stderr));
             let status = child.wait();
+            *lock(&request.phase) = Phase::Finished;
             let _ = feeder.join();
             let (stdout, stdout_total) = stdout_task.join().unwrap_or((Vec::new(), 0));
             let (stderr, stderr_total) = stderr_task.join().unwrap_or((Vec::new(), 0));
-            if !request.ended.load(Ordering::SeqCst) {
+            let answered = !request.ended.swap(true, Ordering::SeqCst);
+            self.release(&request);
+            if answered {
                 for piece in protocol::pieces(&stdout) {
                     self.frames.output(&request.id, false, &piece);
                 }
@@ -377,6 +388,5 @@ impl Lane {
                     .done(&request.id, exit_code(status), if cut { "t" } else { "" });
             }
         }
-        self.release(&request);
     }
 }

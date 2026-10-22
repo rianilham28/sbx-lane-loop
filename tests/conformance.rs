@@ -788,6 +788,34 @@ fn a_signal_ends_the_loop_and_every_group() {
 }
 
 #[test]
+fn a_request_answers_once_even_against_an_immediate_cancel() {
+    for_each(|implementation| {
+        let mut lane = Loop::start(implementation);
+        for round in 0..20 {
+            let id = format!("q{round}");
+            lane.request(&id, None, "exit 0");
+            lane.cancel(&id);
+            lane.until("one answer", |frames| {
+                frames
+                    .iter()
+                    .any(|frame| frame.starts_with(&format!("D {id} ")))
+            });
+        }
+        thread::sleep(Duration::from_millis(200));
+        let frames = lane.frames();
+        for round in 0..20 {
+            let id = format!("q{round}");
+            let endings = frames
+                .iter()
+                .filter(|frame| frame.starts_with(&format!("D {id} ")))
+                .count();
+            assert_eq!(endings, 1, "{id} answered {endings} times");
+        }
+        assert_eq!(lane.end(), 0);
+    });
+}
+
+#[test]
 fn a_second_request_on_its_own_key_is_refused() {
     for_each(|implementation| {
         let mut lane = Loop::start(implementation);
