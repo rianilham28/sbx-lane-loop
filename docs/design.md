@@ -82,7 +82,7 @@ are the same:
   was not built for.
 - The bash id hashes a script this program does not contain. Two different
   programs answering the same "I am this script's hash" is a false identity,
-  and it would let a future divergence ship under an unchanged id.
+  and it would let a divergence ship under an unchanged id.
 
 Coexistence is what the two ids make explicit. A sandbox can hold a loop of
 either wire while images and clients roll forward:

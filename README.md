@@ -99,12 +99,14 @@ O 7a0f 1 aGkK
 D 7a0f 0
 ```
 
+The flags field is always there; empty, it leaves a trailing space (`D 7a0f 0 `).
+
 ## `--protocol`
 
 The protocol id is eight lowercase hex characters derived from the wire
 definition (`src/protocol.rs`, `WIRE`): the first four bytes of its SHA-256.
-It exists so a client can tell a loop of its own wire from one an earlier
-build left behind: the id goes into the process label such as
+It exists so a client can tell a loop of its own wire from one a build of another
+wire left behind: the id goes into the process label such as
 `sbx-lane-stream-dea4911a-1f2e3d4c`, and a client adopts only a label naming
 an id it speaks.
 
@@ -112,8 +114,8 @@ This binary and the bash loop are distinct ids even though they speak the
 same frames: a label that cannot name which implementation answers cannot be
 used to decide whether to start this one, and the bash id is a hash of a
 script this program does not contain. A client that knows both ids can adopt
-either and start this one when the image has it. An older client sees a
-foreign id, ends that loop once, and starts its own — which is why the image
+either and start this one when the image has it. A client that does not
+recognize the id treats the loop as foreign: it ends it once and starts its own — which is why the image
 keeps the bash loop available as the fallback.
 
 ## Verify a release

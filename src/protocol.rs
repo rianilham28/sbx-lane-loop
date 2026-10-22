@@ -26,7 +26,7 @@ pub const PIECE: usize = 460;
 /// protocol id a label carries — `LANE_LOOP_PROTOCOL`'s sibling on the bash
 /// side, which hashes that script's text the same way. Editing any frame or
 /// bound means editing this string: that is what lets a client tell a loop of
-/// its own wire from one an earlier build left behind.
+/// its own wire from one a different build left behind.
 pub const WIRE: &str = "\
 lane-loop/1
 request: R <id> <b64> | S <id> <key> <b64> | K <id>
@@ -108,8 +108,8 @@ pub fn parse(line: &[u8]) -> Incoming<'_> {
 
     // `S <id> <key> <payload>`; the bash loop reads the key and the payload
     // with `${rest#* }`, which leaves the string whole when there is no space
-    // — so a line that stops early puts the rest in both places and is
-    // refused later as a payload that is not base64.
+    // — so a line that stops early puts the rest in both places, refused as a
+    // payload that is not base64.
     let (key, payload) = if tag == b'S' {
         match after_id {
             Some(rest) => {

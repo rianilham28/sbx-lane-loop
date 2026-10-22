@@ -2,7 +2,7 @@
 //! stdout the frames.
 //!
 //! Each request is a `sh` in a process group of its own, so ending one —
-//! `K`, a newer stream taking its key, or the loop ending at all — reaches
+//! `K`, a successor stream taking its key, or the loop ending at all — reaches
 //! every process the command started. The state that decides is two maps: an
 //! id to its request (the newest of that id, as the bash loop's pid file) and
 //! a key to the request holding it.
@@ -190,7 +190,7 @@ impl Lane {
                 None => None,
             }
         };
-        // An S naming a held key ends the holder before the new request is
+        // An S naming a held key ends the holder before the successor is
         // acked, so its answer cannot arrive after the successor's ack.
         if let Some(replaced) = replaced {
             self.end(&replaced);

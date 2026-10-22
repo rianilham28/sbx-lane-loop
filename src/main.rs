@@ -6,7 +6,7 @@
 //! `docs/lane-loop.md` records what is kept and what is improved.
 //!
 //! Requests run in their own process groups, so ending one — by `K`, by a
-//! newer request taking its key, or by the loop ending at all — reaches every
+//! successor request taking its key, or by the loop ending at all — reaches every
 //! process the command started.
 
 mod base64;
