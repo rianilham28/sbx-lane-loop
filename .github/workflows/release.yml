@@ -27,9 +27,11 @@ jobs:
           - aarch64-unknown-linux-musl
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          targets: ${{ matrix.target }}
+      # The channel and both musl targets come from rust-toolchain.toml.
+      - name: Install the pinned toolchain
+        run: |
+          rustup show
+          rustc --version
 
       - name: Build
         run: cargo build --locked --release --target "${{ matrix.target }}"

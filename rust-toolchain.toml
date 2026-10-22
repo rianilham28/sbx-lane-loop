@@ -1,0 +1,9 @@
+# The toolchain every workflow and every local build uses: an exact channel,
+# so a release is built by the compiler it was tested with. CI installs it
+# with `rustup show`, which reads this file — including the components and the
+# two musl targets the release builds.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["clippy", "rustfmt"]
+targets = ["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl"]

@@ -17,9 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          components: rustfmt, clippy
+      # rustup reads rust-toolchain.toml: the exact channel, rustfmt and
+      # clippy, and the musl targets. No compiler floats between runs.
+      - name: Install the pinned toolchain
+        run: |
+          rustup show
+          rustc --version
 
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
