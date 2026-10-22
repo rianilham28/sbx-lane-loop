@@ -1,0 +1,5 @@
+# The aarch64 release links with Rust's bundled LLD: the CI host's `cc` is
+# x86_64 and has no aarch64 linker, while rust-lld resolves from the
+# toolchain's own sysroot. x86_64 keeps the default.
+[target.aarch64-unknown-linux-musl]
+linker = "rust-lld"

@@ -1,0 +1,18 @@
+[package]
+name = "sbx-lane-loop"
+version = "0.1.0"
+edition = "2021"
+description = "The sandbox-side half of the lane stream: one process per sandbox, line-framed requests in, frames out"
+repository = "https://github.com/rianilham28/sbx-lane-loop"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "sbx-lane-loop"
+path = "src/main.rs"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+opt-level = "s"

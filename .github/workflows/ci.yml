@@ -1,0 +1,32 @@
+# Formatting, lints, the unit tests and the conformance suite — first against
+# the crate's own build, then against the release binary the tags publish.
+# The bash half of the conformance suite stays off here: its source lives in a
+# private repository and is not vendored.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          components: rustfmt, clippy
+
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+
+      - name: Conformance against the release binary
+        run: |
+          cargo build --locked --release
+          LANE_LOOP_BIN="$PWD/target/release/sbx-lane-loop" \
+            cargo test --locked --test conformance
