@@ -143,6 +143,13 @@ handling were all reasoned about at 512.
   liveness, so no client can tell.
 - **SIGPIPE is the shell's.** Rust ignores it by default; the default action
   is restored so a loop whose reader is gone ends as the bash loop did.
+- **One answer.** A completion claims the request's single answer before
+  writing it, so a `K` racing a finishing command cannot produce a second `D`.
+  The bash loop can: its cancel reads the pid file just before the request
+  removes it, and both then answer. A client drops a second `D` for an id it
+  has already finished as an unknown id, so the rule is invisible — the
+  conformance suite holds this program to one and records the bash loop's
+  two.
 
 ## Testing
 
