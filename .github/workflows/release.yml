@@ -32,6 +32,11 @@ jobs:
         run: |
           rustup show
           rustc --version
+          # A gate, not a note: a floating compiler or a missing musl std
+          # would change what a release is built from.
+          rustc --version | grep -qE '^rustc 1\.99\.1 '
+          rustup target list --installed | grep -qx 'x86_64-unknown-linux-musl'
+          rustup target list --installed | grep -qx 'aarch64-unknown-linux-musl'
 
       - name: Build
         run: cargo build --locked --release --target "${{ matrix.target }}"
